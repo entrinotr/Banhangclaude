@@ -226,6 +226,7 @@ button.cam{font-size:22px;padding:0 16px;border:2px solid var(--pri);color:var(-
       <input id="st-q" placeholder="Tìm theo tên hoặc mã…" style="width:260px">
       <button class="pri" id="st-add">＋ Thêm hàng</button>
       <button id="st-import">📥 Nhập từ file (Excel/CSV)</button>
+      <button id="st-drive">☁️ Nhập từ Google Drive</button>
       <button id="st-export">📤 Xuất danh sách</button>
       <button id="st-label">🏷️ In tem mã vạch</button>
       <button id="st-tpl" class="muted">Tải file mẫu</button>
@@ -304,6 +305,19 @@ button.cam{font-size:22px;padding:0 16px;border:2px solid var(--pri);color:var(-
   </form>
 </dialog>
 
+<dialog id="dlg-drive">
+  <div class="dlg-h">☁️ Nhập hàng hóa từ Google Drive</div>
+  <div class="dlg-b" style="width:520px">
+    <p style="margin-top:0">Dán <b>link chia sẻ</b> của file Excel (.xlsx), CSV hoặc Google Trang tính.<br>
+    <span class="muted">Trên Drive: bấm ⋮ ở file › <b>Chia sẻ</b> › <b>Quyền truy cập chung</b>: chọn <b>"Bất kỳ ai có đường liên kết"</b> › <b>Sao chép đường liên kết</b>.</span></p>
+    <input id="dv-link" style="width:100%" placeholder="https://drive.google.com/file/d/…">
+    <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="dv-save" checked> Ghi nhớ link này để lần sau bấm "Cập nhật" là xong</label>
+    <p class="muted" id="dv-last" style="margin-bottom:0"></p>
+    <p class="muted" style="margin-bottom:0">Hàng đã có (trùng mã vạch) sẽ được <b>cập nhật tên, giá, loại gói</b>; hàng mới sẽ được thêm vào. Không xóa hàng nào.</p>
+  </div>
+  <div class="dlg-f"><button id="dv-cancel">Đóng</button><button class="pri" id="dv-go">Tải &amp; nhập</button></div>
+</dialog>
+
 <dialog id="dlg-inv">
   <div class="dlg-h" id="di-title">Hóa đơn</div>
   <div class="dlg-b" style="width:560px;max-height:65vh;overflow:auto" id="di-body"></div>
@@ -358,7 +372,7 @@ const DB = {
   _get(k) { if (!this.db) { const v = localStorage.getItem('pos_' + k); return Promise.resolve(v ? JSON.parse(v) : undefined); } return new Promise((res, rej) => { const q = this.db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
   _set(k, v) { if (!this.db) { localStorage.setItem('pos_' + k, JSON.stringify(v)); return Promise.resolve(); } return new Promise((res, rej) => { const tx = this.db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
 };
-const DEF_SET = { name: 'CỬA HÀNG CỦA TÔI', addr: '', phone: '', foot: 'Cảm ơn quý khách. Hẹn gặp lại!', paper: NATIVE ? '58' : '80', cols: '3', lastBackup: null, bt: '', btName: '', cont: true };
+const DEF_SET = { name: 'CỬA HÀNG CỦA TÔI', addr: '', phone: '', foot: 'Cảm ơn quý khách. Hẹn gặp lại!', paper: NATIVE ? '58' : '80', cols: '3', lastBackup: null, bt: '', btName: '', cont: true, driveLink: '', driveLast: null };
 const S = { products: [], invoices: [], settings: { ...DEF_SET }, seq: { p: 0, i: 0 }, cart: [] };
 async function save(...keys) { for (const k of keys) { try { await DB.set(k, S[k]); } catch (e) { toast('Lỗi lưu dữ liệu: ' + e.message, 'err'); } } }
 
@@ -753,12 +767,76 @@ $('#st-label').onclick = () => {
 
 /* ---- Nhập file Excel / CSV ---- */
 $('#st-import').onclick = () => $('#st-file').click();
+
+/* ---- Nhập từ Google Drive ---- */
+function driveUrls(link) {
+  link = String(link).trim();
+  let m = link.match(/docs\.google\.com\/spreadsheets\/d\/([\w-]{10,})/);
+  if (m) return [`https://docs.google.com/spreadsheets/d/${m[1]}/export?format=xlsx`];
+  m = link.match(/\/file\/d\/([\w-]{10,})/) || link.match(/[?&]id=([\w-]{10,})/);
+  if (m) return [`https://drive.usercontent.google.com/download?id=${m[1]}&export=download&confirm=t`, `https://drive.google.com/uc?export=download&id=${m[1]}&confirm=t`];
+  if (/^https?:\/\//.test(link)) return [link];
+  return [];
+}
+async function fetchBytes(url) {
+  if (NATIVE) {
+    const b64 = await nativeCall('fetchUrl', url);
+    const bin = atob(b64), out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  const r = await fetch(url, { redirect: 'follow' });
+  if (!r.ok) throw new Error('Máy chủ trả lỗi ' + r.status);
+  return new Uint8Array(await r.arrayBuffer());
+}
+async function rowsFromBytes(bytes) {
+  const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b) return parseXLSX(buf);
+  const text = decodeText(buf);
+  if (/^\s*</.test(text)) throw new Error('Drive trả về trang web thay vì file — hãy kiểm tra file đã chia sẻ "Bất kỳ ai có đường liên kết" chưa');
+  return parseCSV(text);
+}
+async function importFromDrive(link) {
+  const urls = driveUrls(link);
+  if (!urls.length) { toast('Link không hợp lệ — hãy dán link chia sẻ của Google Drive', 'err'); return false; }
+  toast('☁️ Đang tải file từ Google Drive…');
+  let lastErr = null;
+  for (const u of urls) {
+    try {
+      const rows = await rowsFromBytes(await fetchBytes(u));
+      await importRows(rows);
+      S.settings.driveLast = new Date().toISOString(); await save('settings');
+      return true;
+    } catch (e) { if (!lastErr || !/trang web/.test(lastErr.message)) lastErr = e; }
+  }
+  let msg = lastErr ? lastErr.message : 'không rõ lỗi';
+  if (!NATIVE && /failed to fetch|networkerror|cors/i.test(msg)) msg = 'trình duyệt máy tính chặn tải trực tiếp từ Drive. Hãy tải file về máy rồi dùng nút "📥 Nhập từ file" (trên app điện thoại thì tải trực tiếp được)';
+  toast('Không tải được: ' + msg, 'err');
+  return false;
+}
+$('#st-drive').onclick = () => {
+  $('#dv-link').value = S.settings.driveLink || '';
+  $('#dv-last').textContent = S.settings.driveLast ? 'Lần cập nhật gần nhất: ' + dtext(S.settings.driveLast) : '';
+  $('#dv-go').textContent = S.settings.driveLink ? '🔄 Cập nhật' : 'Tải & nhập';
+  $('#dlg-drive').showModal();
+};
+$('#dv-cancel').onclick = () => $('#dlg-drive').close();
+$('#dv-link').addEventListener('input', () => { $('#dv-go').textContent = $('#dv-link').value.trim() && $('#dv-link').value.trim() === S.settings.driveLink ? '🔄 Cập nhật' : 'Tải & nhập'; });
+$('#dv-go').onclick = async () => {
+  const link = $('#dv-link').value.trim();
+  const b = $('#dv-go'); b.disabled = true; const old = b.textContent; b.textContent = 'Đang tải…';
+  try {
+    if ($('#dv-save').checked) { S.settings.driveLink = link; await save('settings'); }
+    if (await importFromDrive(link)) $('#dlg-drive').close();
+  } finally { b.disabled = false; b.textContent = old; }
+};
+
 $('#st-file').onchange = async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   try {
     const buf = await f.arrayBuffer();
     const rows = /\.xlsx$/i.test(f.name) ? await parseXLSX(buf) : parseCSV(decodeText(buf));
-    importRows(rows);
+    await importRows(rows);
   } catch (err) { console.error(err); toast('Không đọc được file: ' + err.message, 'err'); }
 };
 function decodeText(buf) { try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (e) { return new TextDecoder('windows-1258').decode(buf); } }
@@ -840,7 +918,7 @@ function colKey(h) {
 }
 async function importRows(rows) {
   rows = rows.filter(r => r.some(x => String(x).trim() !== ''));
-  if (!rows.length) { toast('File không có dữ liệu', 'err'); return; }
+  if (!rows.length) throw new Error('File không có dữ liệu');
   let map = null, start = 0;
   for (let i = 0; i < Math.min(rows.length, 10); i++) {
     const m = {}; rows[i].forEach((h, j) => { const k = colKey(h); if (k && m[k] == null) m[k] = j; });
@@ -848,6 +926,9 @@ async function importRows(rows) {
   }
   if (!map) map = rows[0].length >= 4 ? { code: 0, name: 1, price: 2, unit: 3, stock: 4 } : { name: 0, price: 1, unit: 2 };
   let add = 0, upd = 0, skip = 0;
+  const byCode = new Map(), byName = new Map(), nk = (n, u) => norm(n) + '|' + norm(u);
+  for (const x of S.products) { if (x.code) byCode.set(x.code.toLowerCase(), x); byName.set(nk(x.name, x.unit), x); }
+  const lookCode = c => { c = c.toLowerCase(); return byCode.get(c) || (/^0\d{12}$/.test(c) ? byCode.get(c.slice(1)) : null) || (/^\d{12}$/.test(c) ? byCode.get('0' + c) : null); };
   for (let i = start; i < rows.length; i++) {
     const r = rows[i], g = k => map[k] == null ? '' : r[map[k]] ?? '';
     const name = String(g('name')).trim(); if (!name) { skip++; continue; }
@@ -855,9 +936,9 @@ async function importRows(rows) {
     if (!/^[\x20-\x7e]*$/.test(code)) code = '';
     const unit = String(g('unit')).trim(), price = Math.round(parseMoney(g('price')));
     const stRaw = g('stock'); const stock = String(stRaw).trim() === '' ? undefined : (typeof stRaw === 'number' ? stRaw : parseFloat(String(stRaw).replace(/\./g, '').replace(',', '.')) || 0);
-    let p = code ? findByCode(code) : S.products.find(x => norm(x.name) === norm(name) && norm(x.unit) === norm(unit));
+    let p = code ? lookCode(code) : byName.get(nk(name, unit));
     if (p) { Object.assign(p, { name, unit, price }); if (code) p.code = code; if (stock !== undefined) p.stock = stock; upd++; }
-    else { S.products.push({ id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), code: code || newCode(), name, unit, price, stock: stock === undefined ? null : stock }); add++; }
+    else { p = { id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), code: code || newCode(), name, unit, price, stock: stock === undefined ? null : stock }; S.products.push(p); byCode.set(p.code.toLowerCase(), p); byName.set(nk(name, unit), p); add++; }
   }
   await save('products', 'seq'); renderStock(); renderCart();
   toast(`Nhập xong: thêm ${add}, cập nhật ${upd}${skip ? ', bỏ qua ' + skip + ' dòng trống tên' : ''}`, 'ok');
