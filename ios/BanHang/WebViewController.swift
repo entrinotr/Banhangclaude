@@ -155,6 +155,21 @@ final class WebViewController: UIViewController, WKScriptMessageHandler, WKUIDel
         case "save":
             saveAndShare(name: arg(0), base64: arg(1), id: id)
 
+        case "fetchUrl":
+            guard let url = URL(string: arg(0)) else { reply(id, false, "Link không hợp lệ"); return }
+            var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
+            req.setValue("Mozilla/5.0 (iPhone) BanHang/1.0", forHTTPHeaderField: "User-Agent")
+            URLSession.shared.dataTask(with: req) { data, response, error in
+                if let error = error {
+                    self.reply(id, false, "Không tải được (kiểm tra mạng): \(error.localizedDescription)"); return
+                }
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard status == 200, let data = data else {
+                    self.reply(id, false, "Máy chủ trả lỗi \(status)"); return
+                }
+                self.reply(id, true, data.base64EncodedString())
+            }.resume()
+
         default:
             reply(id, false, "Chức năng chưa hỗ trợ: \(fn)")
         }
