@@ -1,0 +1,56 @@
+name: BanHang
+options:
+  bundleIdPrefix: vn.banhang
+  deploymentTarget:
+    iOS: "14.0"
+targets:
+  BanHang:
+    type: application
+    platform: iOS
+    sources:
+      - path: BanHang
+      - path: ../web
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: vn.banhang.app
+        PRODUCT_NAME: BanHang
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_BITCODE: NO
+    info:
+      path: BanHang/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: vi
+        CFBundleDisplayName: Bán Hàng
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UIViewControllerBasedStatusBarAppearance: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        ITSAppUsesNonExemptEncryption: false
+        NSCameraUsageDescription: Dùng camera để quét mã vạch sản phẩm khi bán hàng.
+        NSBluetoothAlwaysUsageDescription: Dùng Bluetooth để kết nối máy in hóa đơn.
+        NSBluetoothPeripheralUsageDescription: Dùng Bluetooth để kết nối máy in hóa đơn.
