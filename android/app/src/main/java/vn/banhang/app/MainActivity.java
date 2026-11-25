@@ -34,11 +34,15 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanning;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Method;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.Set;
 import java.util.UUID;
 
@@ -254,6 +258,47 @@ public class MainActivity extends Activity {
         public void save(final String name, final String base64, final String mime, final String id) {
             String msg = saveFile(name, base64, mime);
             callback(id, !msg.startsWith("Lỗi"), msg);
+        }
+
+        /** Tải một file từ Internet (Google Drive…), trả về nội dung dạng base64. */
+        @JavascriptInterface
+        public void fetchUrl(final String url, final String id) {
+            new Thread(() -> {
+                HttpURLConnection conn = null;
+                try {
+                    String current = url;
+                    for (int hop = 0; hop < 8; hop++) {
+                        conn = (HttpURLConnection) new URL(current).openConnection();
+                        conn.setInstanceFollowRedirects(false);
+                        conn.setConnectTimeout(20000);
+                        conn.setReadTimeout(60000);
+                        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) BanHang/1.0");
+                        int code = conn.getResponseCode();
+                        if (code >= 300 && code < 400 && conn.getHeaderField("Location") != null) {
+                            current = new URL(new URL(current), conn.getHeaderField("Location")).toString();
+                            conn.disconnect();
+                            continue;
+                        }
+                        if (code != 200) throw new IOException("Máy chủ trả lỗi " + code);
+                        try (InputStream in = conn.getInputStream()) {
+                            ByteArrayOutputStream out = new ByteArrayOutputStream();
+                            byte[] buf = new byte[16384];
+                            int n;
+                            while ((n = in.read(buf)) > 0) {
+                                out.write(buf, 0, n);
+                                if (out.size() > 60 * 1024 * 1024) throw new IOException("File quá lớn");
+                            }
+                            callback(id, true, Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP));
+                        }
+                        return;
+                    }
+                    throw new IOException("Chuyển hướng quá nhiều lần");
+                } catch (Exception e) {
+                    callback(id, false, "Không tải được (kiểm tra mạng): " + e.getMessage());
+                } finally {
+                    if (conn != null) conn.disconnect();
+                }
+            }).start();
         }
 
         /** Gửi dữ liệu ESC/POS (base64) tới máy in. */
